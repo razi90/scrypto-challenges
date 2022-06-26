@@ -14,7 +14,7 @@ use scrypto::prelude::*;
 blueprint! {
     struct LendingPool {
         /// The liquidity pool
-        liquidity_pool: Vault,
+        liquidity_pool: Vec<Vault>,
         /// The min collateral ratio that a user has to maintain
         min_collateral_ratio: Decimal,
         /// The max percent of liquidity pool one can borrow
@@ -32,10 +32,10 @@ blueprint! {
     }
 
     impl LendingPool {
-        /// Creates a lending pool, with single collateral.
-        pub fn instantiate_autolend(reserve_address: ResourceAddress) -> ComponentAddress {
+        /// Creates a multicollateral lending pool.
+        pub fn instantiate_autolend() -> ComponentAddress {
             Self {
-                liquidity_pool: Vault::new(reserve_address),
+                liquidity_pool: Vec::new(),
                 min_collateral_ratio: dec!("1.2"),
                 max_borrow_percent: dec!("0.3"),
                 max_liquidation_percent: dec!("0.5"),
@@ -61,6 +61,12 @@ blueprint! {
             let user_id = Self::get_user_id(user_auth);
             let amount = reserve_tokens.amount();
 
+            // Get reserve corresponding to the deposit token address
+            let reserve = match self.get_reserve_from_address(&reserve_tokens.resource_address()) {
+                Some(x) => x,
+                None => panic!("Reserve not available for this asset.")
+            };
+
             // Update user state
             let deposit_interest_rate = self.deposit_interest_rate;
             let user = match self.users.get(&user_id) {
@@ -80,7 +86,7 @@ blueprint! {
 
             // Commit state changes
             self.users.insert(user_id, user);
-            self.liquidity_pool.put(reserve_tokens);
+            reserve.put(reserve_tokens);
         }
 
         /// Redeems the underlying assets, partially or in full.
@@ -190,6 +196,16 @@ blueprint! {
         fn get_user_id(user_auth: Proof) -> ResourceAddress {
             assert!(user_auth.amount() > dec!("0"), "Invalid user proof");
             user_auth.resource_address()
+        }
+
+        /// Get the reserve for a specific asset
+        fn get_reserve_from_address(&self, asset_address: &ResourceAddress) -> Option<&mut Vault> {
+            for reserve in self.liquidity_pool.iter() {
+                if reserve.resource_address().eq(asset_address) {
+                    return Some(&mut reserve);
+                }
+            }
+            return None;
         }
     }
 }
