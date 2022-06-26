@@ -60,12 +60,7 @@ blueprint! {
         pub fn deposit(&mut self, user_auth: Proof, reserve_tokens: Bucket) {
             let user_id = Self::get_user_id(user_auth);
             let amount = reserve_tokens.amount();
-
-            // Get reserve corresponding to the deposit token address
-            let reserve = match self.get_reserve_from_address(&reserve_tokens.resource_address()) {
-                Some(x) => x,
-                None => panic!("Reserve not available for this asset.")
-            };
+            let reserve = self.get_reserve_from_address(&reserve_tokens.resource_address());
 
             // Update user state
             let deposit_interest_rate = self.deposit_interest_rate;
@@ -90,8 +85,9 @@ blueprint! {
         }
 
         /// Redeems the underlying assets, partially or in full.
-        pub fn redeem(&mut self, user_auth: Proof, amount: Decimal) -> Bucket {
+        pub fn redeem(&mut self, user_auth: Proof, asset_address: ResourceAddress, amount: Decimal) -> Bucket {
             let user_id = Self::get_user_id(user_auth);
+            let reserve = self.get_reserve_from_address(&asset_address);
 
             // Update user state
             let mut user = self.get_user(user_id);
@@ -100,13 +96,13 @@ blueprint! {
 
             debug!(
                 "LP balance: {}, redeemded: {}",
-                self.liquidity_pool.amount(),
+                reserve.amount(),
                 to_return_amount
             );
 
             // Commit state changes
             self.users.insert(user_id, user);
-            self.liquidity_pool.take(to_return_amount)
+            reserve.take(to_return_amount)
         }
 
         /// Borrows the specified amount from lending pool
@@ -199,13 +195,13 @@ blueprint! {
         }
 
         /// Get the reserve for a specific asset
-        fn get_reserve_from_address(&self, asset_address: &ResourceAddress) -> Option<&mut Vault> {
+        fn get_reserve_from_address(&self, asset_address: &ResourceAddress) -> &mut Vault {
             for reserve in self.liquidity_pool.iter() {
                 if reserve.resource_address().eq(asset_address) {
-                    return Some(&mut reserve);
+                    return &mut reserve;
                 }
             }
-            return None;
+            panic!("Reserve not available for this asset.")
         }
     }
 }
