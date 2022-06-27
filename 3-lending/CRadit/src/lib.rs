@@ -13,8 +13,8 @@ use scrypto::prelude::*;
 
 blueprint! {
     struct LendingPool {
-        /// The liquidity pool
-        liquidity_pool: Vec<Vault>,
+        /// The available asset reserves
+        reserves: LazyMap<ResourceAddress, Vault>,
         /// The min collateral ratio that a user has to maintain
         min_collateral_ratio: Decimal,
         /// The max percent of liquidity pool one can borrow
@@ -35,7 +35,7 @@ blueprint! {
         /// Creates a multicollateral lending pool.
         pub fn instantiate_autolend() -> ComponentAddress {
             Self {
-                liquidity_pool: Vec::new(),
+                reserves: LazyMap::new(),
                 min_collateral_ratio: dec!("1.2"),
                 max_borrow_percent: dec!("0.3"),
                 max_liquidation_percent: dec!("0.5"),
@@ -60,7 +60,7 @@ blueprint! {
         pub fn deposit(&mut self, user_auth: Proof, reserve_tokens: Bucket) {
             let user_id = Self::get_user_id(user_auth);
             let amount = reserve_tokens.amount();
-            let reserve = self.get_reserve_from_address(&reserve_tokens.resource_address());
+            let mut reserve = self.get_reserve(&reserve_tokens.resource_address());
 
             // Update user state
             let deposit_interest_rate = self.deposit_interest_rate;
@@ -87,7 +87,7 @@ blueprint! {
         /// Redeems the underlying assets, partially or in full.
         pub fn redeem(&mut self, user_auth: Proof, asset_address: ResourceAddress, amount: Decimal) -> Bucket {
             let user_id = Self::get_user_id(user_auth);
-            let reserve = self.get_reserve_from_address(&asset_address);
+            let mut reserve = self.get_reserve(&asset_address);
 
             // Update user state
             let mut user = self.get_user(user_id);
@@ -106,11 +106,12 @@ blueprint! {
         }
 
         /// Borrows the specified amount from lending pool
-        pub fn borrow(&mut self, user_auth: Proof, requested: Decimal) -> Bucket {
+        pub fn borrow(&mut self, user_auth: Proof, asset_address: ResourceAddress, requested: Decimal) -> Bucket {
             let user_id = Self::get_user_id(user_auth);
+            let mut reserve = self.get_reserve(&asset_address);
 
             assert!(
-                requested <= self.liquidity_pool.amount() * self.max_borrow_percent,
+                requested <= reserve.amount() * self.max_borrow_percent,
                 "Max borrow percent exceeded"
             );
 
@@ -122,12 +123,13 @@ blueprint! {
 
             // Commit state changes
             self.users.insert(user_id, user);
-            self.liquidity_pool.take(requested)
+            reserve.take(requested)
         }
 
         /// Repays a loan, partially or in full.
-        pub fn repay(&mut self, user_auth: Proof, mut repaid: Bucket) -> Bucket {
+        pub fn repay(&mut self, user_auth: Proof, asset_address: ResourceAddress, mut repaid: Bucket) -> Bucket {
             let user_id = Self::get_user_id(user_auth);
+            let mut reserve = self.get_reserve(&asset_address);
 
             // Update user state
             let mut user = self.get_user(user_id);
@@ -136,13 +138,15 @@ blueprint! {
 
             // Commit state changes
             self.users.insert(user_id, user);
-            self.liquidity_pool.put(repaid);
+            reserve.put(repaid);
             to_return
         }
 
         /// Liquidates one user's position, if it's under collateralized.
-        pub fn liquidate(&mut self, user_id: ResourceAddress, repaid: Bucket) -> Bucket {
+        pub fn liquidate(&mut self, user_id: ResourceAddress, asset_address: ResourceAddress, repaid: Bucket) -> Bucket {
             let mut user = self.get_user(user_id);
+            let mut reserve = self.get_reserve(&asset_address);
+            reserve.amount();
 
             // Check if the user is under collateralized
             let collateral_ratio = user.get_collateral_ratio();
@@ -163,7 +167,7 @@ blueprint! {
 
             // Update user state
             let to_return_amount = user.on_liquidate(repaid.amount(), self.max_liquidation_percent);
-            let to_return = self.liquidity_pool.take(to_return_amount);
+            let to_return = reserve.take(to_return_amount);
 
             // Commit state changes
             self.users.insert(user_id, user);
@@ -194,14 +198,11 @@ blueprint! {
             user_auth.resource_address()
         }
 
-        /// Get the reserve for a specific asset
-        fn get_reserve_from_address(&self, asset_address: &ResourceAddress) -> &mut Vault {
-            for reserve in self.liquidity_pool.iter() {
-                if reserve.resource_address().eq(asset_address) {
-                    return &mut reserve;
-                }
+        fn get_reserve(& self, address: &ResourceAddress) -> Vault {
+            match self.reserves.get(address) {
+                Some(reserve) => reserve,
+                _ => panic!("Reserve for this asset not found"),
             }
-            panic!("Reserve not available for this asset.")
         }
     }
 }
