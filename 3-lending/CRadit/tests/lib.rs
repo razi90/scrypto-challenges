@@ -11,6 +11,7 @@ struct TestEnv<'a, L: SubstateStore> {
     priv_key: EcdsaPrivateKey,
     account: ComponentAddress,
     usd: ResourceAddress,
+    btc: ResourceAddress,
     lending_pool: ComponentAddress,
 }
 
@@ -19,8 +20,7 @@ fn set_up_test_env<'a, L: SubstateStore>(ledger: &'a mut L) -> TestEnv<'a, L> {
     let (key, priv_key, account) = executor.new_account();
     let package = executor.publish_package(compile_package!()).unwrap();
 
-    let receipt = executor
-        .validate_and_execute(
+    let receipt = executor.validate_and_execute(
             &TransactionBuilder::new()
                 .new_token_fixed(HashMap::new(), dec!("1000000"))
                 .call_method_with_all_resources(account, "deposit_batch")
@@ -28,16 +28,29 @@ fn set_up_test_env<'a, L: SubstateStore>(ledger: &'a mut L) -> TestEnv<'a, L> {
                 .sign([&priv_key]),
         )
         .unwrap();
+
     let usd = receipt.new_resource_addresses[0];
+
+    let receipt = executor
+        .validate_and_execute(
+            &TransactionBuilder::new()
+            .new_token_fixed(HashMap::new(), dec!("1000"))
+            .call_method_with_all_resources(account, "deposit_batch")
+            .build(executor.get_nonce([key]))
+            .sign([&priv_key]),
+        )
+        .unwrap();
+
+    let btc = receipt.new_resource_addresses[0];
 
     let receipt = executor
         .validate_and_execute(
             &TransactionBuilder::new()
                 .call_function(
                     package,
-                    "AutoLend",
-                    "instantiate_autolend",
-                    vec![scrypto_encode(&usd), scrypto_encode("USD")],
+                    "LendingPool",
+                    "instantiate_lending_pool",
+                    vec![],
                 )
                 .call_method_with_all_resources(account, "deposit_batch")
                 .build(executor.get_nonce([key]))
@@ -46,12 +59,26 @@ fn set_up_test_env<'a, L: SubstateStore>(ledger: &'a mut L) -> TestEnv<'a, L> {
         .unwrap();
     let lending_pool = receipt.new_component_addresses[0];
 
+    executor.validate_and_execute(
+        &TransactionBuilder::new()
+            .call_method(
+                lending_pool,
+                "add_new_reserve",
+                vec![scrypto_encode(&usd)],
+            )
+            .call_method_with_all_resources(account, "deposit_batch")
+            .build(executor.get_nonce([key]))
+            .sign([&priv_key]),
+    )
+    .unwrap();
+
     TestEnv {
         executor,
         key,
         priv_key,
         account,
         usd,
+        btc,
         lending_pool,
     }
 }
@@ -207,6 +234,7 @@ fn test_deposit_and_redeem() {
                         "redeem",
                         vec![
                             scrypto_encode(&scrypto::resource::Proof(proof_id)),
+                            scrypto_encode(&env.usd),
                             scrypto_encode(&dec!("150")),
                         ],
                     )
@@ -290,6 +318,7 @@ fn test_borrow_and_repay() {
                         "borrow",
                         vec![
                             scrypto_encode(&scrypto::resource::Proof(proof_id)),
+                            scrypto_encode(&env.usd),
                             scrypto_encode(&dec!("100")),
                         ],
                     )
@@ -342,6 +371,7 @@ fn test_borrow_and_repay() {
                         "borrow",
                         vec![
                             scrypto_encode(&scrypto::resource::Proof(prood_id)),
+                            scrypto_encode(&env.usd),
                             scrypto_encode(&dec!("100")),
                         ],
                     )

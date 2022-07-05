@@ -33,7 +33,7 @@ blueprint! {
 
     impl LendingPool {
         /// Creates a multicollateral lending pool.
-        pub fn instantiate_autolend() -> ComponentAddress {
+        pub fn instantiate_lending_pool() -> ComponentAddress {
             Self {
                 reserves: LazyMap::new(),
                 min_collateral_ratio: dec!("1.2"),
@@ -54,6 +54,12 @@ blueprint! {
                 .divisibility(DIVISIBILITY_NONE)
                 .metadata("name", "AutoLend User Badge")
                 .initial_supply(1)
+        }
+
+        /// Add a new reserve for to hold a specific asset
+        pub fn add_new_reserve(&mut self, asset_address: ResourceAddress) {
+            let reserve = Vault::new(asset_address);
+            self.reserves.insert(asset_address, reserve)
         }
 
         /// Deposits into the liquidity pool and start earning interest.
@@ -127,9 +133,9 @@ blueprint! {
         }
 
         /// Repays a loan, partially or in full.
-        pub fn repay(&mut self, user_auth: Proof, asset_address: ResourceAddress, mut repaid: Bucket) -> Bucket {
+        pub fn repay(&mut self, user_auth: Proof, mut repaid: Bucket) -> Bucket {
             let user_id = Self::get_user_id(user_auth);
-            let mut reserve = self.get_reserve(&asset_address);
+            let mut reserve = self.get_reserve(&repaid.resource_address());
 
             // Update user state
             let mut user = self.get_user(user_id);
